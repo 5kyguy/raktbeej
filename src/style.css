@@ -206,3 +206,72 @@ details.advanced summary {
   color: var(--muted);
   letter-spacing: 0.08em;
 }
+
+/* ---- reader (M2) ---- */
+
+.banner {
+  margin: 1rem 0 0;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  padding: 0.6rem 0.9rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.banner.refused {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.banner.hidden {
+  display: none;
+}
+
+.status-value.refused {
+  color: var(--accent);
+}
+
+.post {
+  margin-top: 1.5rem;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  padding: 1rem 1.25rem;
+}
+
+.post > h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: normal;
+  letter-spacing: 0.04em;
+}
+
+.post > time {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+}
+
+.post-body {
+  margin-top: 0.75rem;
+  font-size: 0.95rem;
+}
+
+.post-body p {
+  margin: 0.5rem 0;
+}
+
+.post-body code {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 0 0.3rem;
+  border-radius: 2px;
+  font-size: 0.85em;
+}
+
+code {
+  font-family: inherit;
+}
+
+a code {
+  color: inherit;
+}
