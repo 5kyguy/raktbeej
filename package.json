@@ -16,6 +16,7 @@
     "@ethersphere/bee-js": "^13.2.0"
   },
   "devDependencies": {
+    "@types/node": "^26.6.6",
     "typescript": "^7.0.2",
     "vite": "^8.3.5",
     "vitest": "^4.1.12"

@@ -7,6 +7,8 @@
  * bytes, forming the bloodline: a history that cannot be silently rewritten.
  */
 
+import { Bytes } from '@ethersphere/bee-js'
+
 /** Swarm reference: 32 bytes, 64 hex chars, no 0x prefix. */
 export type Ref = string
 
@@ -82,4 +84,52 @@ export function isSeed(value: unknown): value is Seed {
   return (
     v.type === 'seed' && typeof v.ts === 'number' && isRef(v.manifest) && typeof v.index === 'number'
   )
+}
+
+// ---- canonical encoding (M1) ----
+//
+// Wire bytes are produced by these encoders only. Fixed key order makes the
+// byte encoding — and therefore the `prev` hash chain — deterministic.
+
+/** Canonical payload JSON (must stay well under the 4 KB SOC limit). */
+export function encodePayload(payload: FeedPayload): string {
+  return JSON.stringify({ v: 1, ts: payload.ts, prev: payload.prev, manifest: payload.manifest })
+}
+
+/** Canonical manifest JSON. */
+export function encodeManifest(manifest: Manifest): string {
+  return JSON.stringify({
+    v: 1,
+    posts: manifest.posts.map((post) => ({ title: post.title, ts: post.ts, ref: post.ref })),
+  })
+}
+
+/** keccak256 of canonical JSON, as a ref. */
+export function hashJson(json: string): Ref {
+  return Bytes.keccak256(Bytes.fromUtf8(json)).toHex()
+}
+
+export function parsePayload(json: string): FeedPayload {
+  const value: unknown = JSON.parse(json)
+  if (!isFeedPayload(value)) throw new Error(`not a feed payload: ${json.slice(0, 100)}`)
+  return value
+}
+
+export function parseManifest(json: string): Manifest {
+  const value: unknown = JSON.parse(json)
+  if (!isManifest(value)) throw new Error(`not a manifest: ${json.slice(0, 100)}`)
+  return value
+}
+
+/**
+ * The next feed payload. `prev` chains to the keccak256 of the previous
+ * update's canonical bytes — the bloodline: nothing can be silently
+ * unwritten without breaking the chain.
+ */
+export function buildNextPayload(
+  latest: { json: string } | null,
+  manifest: Ref,
+  ts: number,
+): FeedPayload {
+  return { v: 1, ts, prev: latest ? hashJson(latest.json) : null, manifest }
 }
