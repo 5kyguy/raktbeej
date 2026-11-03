@@ -1,0 +1,23 @@
+{
+  "name": "raktbeej",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "A publishing protocol with the same property as the blood-seed asura: every copy is a seed; take down any host and the whole regrows from any drop.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@ethersphere/bee-js": "^13.2.0"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "^4.1.12"
+  }
+}
