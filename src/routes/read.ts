@@ -19,7 +19,16 @@ import type { Drop } from '../lib/gateways'
 import { parseFragment } from '../lib/link'
 import { parseManifest } from '../lib/protocol'
 import { renderMarkdown } from '../lib/markdown'
+import { startSeedListener } from '../lib/seeds'
+import type { SeedChannelState } from '../lib/seeds'
 import { VerificationRefused } from '../lib/verify'
+
+const SEED_LABEL: Record<SeedChannelState, string> = {
+  off: 'off',
+  connecting: 'connecting…',
+  live: 'live ✓',
+  down: 'down — polling (60s)',
+}
 
 function statusRow(label: string): { row: HTMLElement; value: HTMLElement } {
   const value = h('span', { class: 'status-value' })
@@ -263,6 +272,54 @@ export function renderRead(): HTMLElement {
     }
   }
 
-  void refresh()
+  let refreshing = false
+  let lastSeedRefresh = 0
+
+  const guardedRefresh = async (): Promise<void> => {
+    if (refreshing) return
+    refreshing = true
+    try {
+      await refresh()
+    } finally {
+      refreshing = false
+    }
+  }
+
+  void guardedRefresh()
+
+  // the live layer: seeds nudge an immediate verified refresh; polling is
+  // the designed fallback (60s + whenever the tab regains focus)
+  const seedListener = startSeedListener(link, {
+    onState: (state, detail) => {
+      seed.value.textContent = SEED_LABEL[state]
+      if (state === 'down' && detail) seed.value.title = detail
+      seed.value.classList.toggle('live', state === 'live')
+    },
+    onSeed: (arrived) => {
+      seed.value.textContent = `live · seed ${timeAt(arrived.ts)}`
+      seed.value.classList.add('live')
+      const now = Date.now()
+      if (now - lastSeedRefresh >= 2_000) {
+        lastSeedRefresh = now
+        void guardedRefresh()
+      }
+    },
+  })
+
+  const poll = setInterval(() => {
+    if (document.visibilityState === 'visible') void guardedRefresh()
+  }, 60_000)
+  const onFocus = (): void => void guardedRefresh()
+  window.addEventListener('focus', onFocus)
+  window.addEventListener(
+    'hashchange',
+    () => {
+      clearInterval(poll)
+      window.removeEventListener('focus', onFocus)
+      seedListener.stop()
+    },
+    { once: true },
+  )
+
   return root
 }

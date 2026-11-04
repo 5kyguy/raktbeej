@@ -15,6 +15,7 @@ import { h } from '../lib/dom'
 import { generateKeyHex, ownerAddress, publishPost } from '../lib/feed'
 import type { RaktbeejLink } from '../lib/link'
 import { serializeFragment } from '../lib/link'
+import { SeedChannel } from '../lib/seeds'
 
 const KEY_STORAGE = 'raktbeej:key'
 const TOPIC_STORAGE = 'raktbeej:topic'
@@ -132,6 +133,9 @@ function editorSection(keyHex: string | null): HTMLElement {
   const result = h('div')
   const publish = h('button', { disabled: keyHex ? '' : 'disabled' }, 'publish drop')
 
+  // the seed channel is kept across publishes; rebuilt if the topic moves
+  let channel: { topic: string; seeds: SeedChannel } | null = null
+
   publish.addEventListener('click', () => {
     if (!keyHex) return
     const link = linkFor(keyHex)
@@ -146,7 +150,19 @@ function editorSection(keyHex: string | null): HTMLElement {
         const r = await publishPost(keyHex, link, titleInput.value, body.value)
         line(true, `post uploaded · ${r.postRef}`)
         line(true, `manifest uploaded · ${r.manifestRef}`)
-        line(true, `feed updated · prev ${r.payload.prev ?? 'null (first drop)'}`)
+        line(true, `feed updated · index ${r.index} · prev ${r.payload.prev ?? 'null (first drop)'}`)
+
+        if (!channel || channel.topic !== link.topic) {
+          channel = { topic: link.topic, seeds: new SeedChannel(keyHex, link) }
+        }
+        const seeded = await channel.seeds.announce({
+          type: 'seed',
+          ts: r.payload.ts,
+          manifest: r.manifestRef,
+          index: r.index,
+        })
+        line(seeded, seeded ? 'seed sent — readers refresh instantly' : 'seed channel unavailable — readers poll (60s)')
+
         const linkText = serializeFragment(link)
         result.append(
           h(

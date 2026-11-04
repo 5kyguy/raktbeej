@@ -50,6 +50,8 @@ export interface PublishResult {
   postRef: Ref
   manifestRef: Ref
   payload: FeedPayload
+  /** feed index this update landed at */
+  index: number
 }
 
 /**
@@ -179,5 +181,5 @@ export async function publishPost(
   const writer = bee.feed.makeWriter(Topic.fromString(link.topic), signer)
   await writer.uploadPayload(getEndpoint().batchId, encodePayload(payload))
 
-  return { postRef, manifestRef, payload }
+  return { postRef, manifestRef, payload, index: latest ? Number(latest.index) + 1 : 0 }
 }

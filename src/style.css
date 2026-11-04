@@ -242,6 +242,10 @@ details.advanced summary {
   color: var(--accent);
 }
 
+.status-value.live {
+  color: #7fbf7f;
+}
+
 .post {
   margin-top: 1.5rem;
   border: 1px solid var(--border);

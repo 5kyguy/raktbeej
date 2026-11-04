@@ -104,6 +104,11 @@ export function encodeManifest(manifest: Manifest): string {
   })
 }
 
+/** Canonical seed JSON — the pubsub announce message. */
+export function encodeSeed(seed: Seed): string {
+  return JSON.stringify({ type: 'seed', ts: seed.ts, manifest: seed.manifest, index: seed.index })
+}
+
 /** keccak256 of canonical JSON, as a ref. */
 export function hashJson(json: string): Ref {
   return Bytes.keccak256(Bytes.fromUtf8(json)).toHex()
