@@ -246,6 +246,12 @@ details.advanced summary {
   color: #7fbf7f;
 }
 
+.footer {
+  margin-top: 3rem;
+  font-size: 0.8rem;
+  text-align: center;
+}
+
 .post {
   margin-top: 1.5rem;
   border: 1px solid var(--border);
