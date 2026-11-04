@@ -2,16 +2,20 @@
  * Reader route: mounts at any fragment that is not `#/publish`.
  *
  * Parses the raktbeej link from the fragment, walks the feed indices
- * across the drops, verifies each chunk's signature against the link's
- * owner, renders the manifest's posts, keeps a last-good offline cache,
- * and shows the raktbeej status panel: which drop served, whether the
- * content is ✓ signed, the feed index, and (from M4) the seed channel.
+ * across the drops (racing — a stalled drop is spilled past), verifies
+ * each chunk's signature against the link's owner, renders the manifest's
+ * posts, keeps a last-good offline cache, and shows the raktbeej status
+ * panel: which drop served and whether it had to spill, ✓ signed, the
+ * feed index, where else the content opens, the block-a-drop demo, and
+ * (from M4) the seed channel.
  */
 
 import { h } from '../lib/dom'
 import { loadCache, saveCache } from '../lib/cache'
 import type { CachedPublication } from '../lib/cache'
 import { downloadText, readLatestVerified } from '../lib/feed'
+import { DROPS, activeDrops, contentUrl, deadDrops, dropLabel } from '../lib/gateways'
+import type { Drop } from '../lib/gateways'
 import { parseFragment } from '../lib/link'
 import { parseManifest } from '../lib/protocol'
 import { renderMarkdown } from '../lib/markdown'
@@ -30,6 +34,43 @@ function statusRow(label: string): { row: HTMLElement; value: HTMLElement } {
 
 function timeAt(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+/** "drop 2 · gateway — spilled" when the winner is not the first live drop. */
+function servedFrom(drop: Drop): string {
+  const live = activeDrops()
+  return live[0]?.id === drop.id ? dropLabel(drop) : `${dropLabel(drop)} — spilled`
+}
+
+/** Block-a-drop demo: rewrite ?dead=… and reload (hash untouched). */
+function blockDemoRow(): { row: HTMLElement; value: HTMLElement } {
+  const select = document.createElement('select')
+  const choices: Array<{ label: string; value: string }> = [
+    { label: '—', value: '' },
+    ...DROPS.map((d) => ({ label: d.id, value: d.id })),
+    { label: 'bzz.link + gateway', value: 'bzz.link,gateway' },
+  ]
+  for (const choice of choices) {
+    const option = document.createElement('option')
+    option.value = choice.value
+    option.textContent = choice.label
+    select.append(option)
+  }
+  select.value = deadDrops().join(',')
+  select.addEventListener('change', () => {
+    const url = new URL(window.location.href)
+    if (select.value) url.searchParams.set('dead', select.value)
+    else url.searchParams.delete('dead')
+    window.location.assign(url.toString())
+  })
+  const value = h('span', { class: 'status-value' }, select)
+  const row = h(
+    'span',
+    { class: 'status-row' },
+    h('span', { class: 'status-label' }, 'block a drop (demo)'),
+    value,
+  )
+  return { row, value }
 }
 
 function postCard(entry: { title: string; ts: number; body?: string }): HTMLElement {
@@ -73,14 +114,18 @@ export function renderRead(): HTMLElement {
   const drop = statusRow('drop')
   const verified = statusRow('verified')
   const index = statusRow('index')
+  const openOn = statusRow('open on')
   const seed = statusRow('seed channel')
+  const blockDemo = blockDemoRow()
   const statusPanel = h(
     'div',
     { class: 'status-panel' },
     drop.row,
     verified.row,
     index.row,
+    openOn.row,
     seed.row,
+    blockDemo.row,
   )
 
   const banner = h('p', { class: 'banner hidden' })
@@ -113,13 +158,19 @@ export function renderRead(): HTMLElement {
 
   root.append(header, statusPanel, banner, posts, h('div', { class: 'row' }, share, shareNote))
 
+  const byId = (id: string): Drop | undefined => DROPS.find((d) => d.id === id)
+  const blocked = deadDrops()
+
   const paint = (publication: CachedPublication, state: 'cached' | 'live'): void => {
     posts.replaceChildren(...[...publication.posts].reverse().map(postCard))
-    drop.value.textContent = publication.drop
+    drop.value.textContent = byId(publication.drop)
+      ? servedFrom(byId(publication.drop)!)
+      : publication.drop
     verified.value.textContent = `✓ signed by ${link.owner.slice(0, 10)}…`
     verified.value.classList.remove('refused')
     index.value.textContent = publication.index
-    banner.classList.toggle('hidden', state === 'live')
+    const showBanner = state === 'cached' || blocked.length > 0
+    banner.classList.toggle('hidden', !showBanner)
     if (state === 'cached') {
       banner.className = 'banner'
       banner.textContent = `offline copy — verified at ${timeAt(publication.savedAt)}, refreshing…`
@@ -133,6 +184,11 @@ export function renderRead(): HTMLElement {
       verified.value.textContent = '…'
       banner.className = 'banner'
       banner.textContent = 'fetching from the drops…'
+    }
+
+    if (blocked.length > 0) {
+      banner.className = 'banner'
+      banner.textContent = `demo: ${blocked.join(', ')} blocked — the reader spills past it`
     }
 
     try {
@@ -162,6 +218,16 @@ export function renderRead(): HTMLElement {
         }),
       )
 
+      openOn.value.replaceChildren(
+        ...activeDrops().map((d, i) =>
+          h('span', {}, i > 0 ? ' · ' : '', h('a', {
+            href: contentUrl(d, latest.payload.manifest),
+            target: '_blank',
+            rel: 'noopener noreferrer',
+          }, d.id)),
+        ),
+      )
+
       const publication: CachedPublication = {
         savedAt: Date.now(),
         index: String(latest.index),
@@ -172,7 +238,10 @@ export function renderRead(): HTMLElement {
       }
       saveCache(link, publication)
       paint(publication, 'live')
-      banner.classList.add('hidden')
+      if (blocked.length > 0) {
+        banner.className = 'banner'
+        banner.textContent = `demo: ${blocked.join(', ')} blocked — served by ${servedFrom(latest.drop)}`
+      }
     } catch (err) {
       if (err instanceof VerificationRefused) {
         posts.replaceChildren()

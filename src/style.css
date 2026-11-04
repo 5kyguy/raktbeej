@@ -108,14 +108,25 @@ label {
 
 input[type='text'],
 input[type='password'],
-textarea {
-  width: 100%;
+textarea,
+select {
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border);
-  padding: 0.5rem 0.6rem;
   font: inherit;
   border-radius: 2px;
+}
+
+input[type='text'],
+input[type='password'],
+textarea {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+}
+
+select {
+  padding: 0.15rem 0.4rem;
+  font-size: 0.85rem;
 }
 
 textarea {

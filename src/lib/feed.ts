@@ -22,7 +22,7 @@
 import { BeeResponseError, FeedIndex, PrivateKey, Topic } from '@ethersphere/bee-js'
 
 import { getEndpoint, makeBee } from './bee'
-import { activeDrops, beeForDrop, spill } from './gateways'
+import { beeForDrop, spill } from './gateways'
 import type { Drop, Spilled } from './gateways'
 import type { RaktbeejLink } from './link'
 import {
@@ -87,10 +87,10 @@ export function ownerAddress(keyHex: string): string {
 }
 
 /**
- * Fetch and verify the feed chunk at `index`. Returns null when no drop has
- * the chunk (a miss — typically the slot after the latest update). Throws
- * {@link VerificationRefused} when any drop served bytes that do not verify
- * against the link's owner, and rethrows the last real fault when every
+ * Fetch and verify the feed chunk at `index`, racing the drops. Returns
+ * null when no drop has the chunk (a miss — typically the slot after the
+ * latest update). Throws {@link VerificationRefused} when bytes that do
+ * not verify were served, and rethrows the most serious fault when every
  * drop failed for non-miss reasons.
  */
 async function fetchVerifiedChunk(
@@ -98,27 +98,17 @@ async function fetchVerifiedChunk(
   index: bigint,
 ): Promise<{ soc: SingleOwnerChunk; drop: Drop } | null> {
   const address = feedChunkAddress(link.topic, FeedIndex.fromBigInt(index), link.owner)
-  let sawTamper = false
-  let lastFault: unknown
-
-  for (const drop of activeDrops()) {
-    try {
-      const bytes = await beeForDrop(drop).chunk.download(address)
-      return { soc: verifySocChunk(bytes, address), drop }
-    } catch (err) {
-      if (isTamper(err)) {
-        sawTamper = true
-      } else if (err instanceof BeeResponseError && err.status === 404) {
-        // miss on this drop — try the next
-      } else {
-        lastFault = err
-      }
-    }
+  try {
+    const spilled = await spill(async (drop, signal) =>
+      verifySocChunk(await beeForDrop(drop).chunk.download(address, {}, { signal }), address),
+    )
+    return { soc: spilled.value, drop: spilled.drop }
+  } catch (err) {
+    if (isTamper(err)) throw new VerificationRefused(address)
+    // the walk's end-of-chain signal is a miss on every drop
+    if (err instanceof BeeResponseError && err.status === 404) return null
+    throw err
   }
-
-  if (sawTamper) throw new VerificationRefused(address)
-  if (lastFault !== undefined) throw lastFault
-  return null
 }
 
 /**
@@ -143,9 +133,11 @@ export async function readLatestVerified(
   throw new Error(`readLatestVerified: walked past ${MAX_WALK} indices without an end`)
 }
 
-/** Download immutable content (manifest / post body) from the first drop that has it. */
+/** Download immutable content (manifest / post body) — first drop to serve it wins the race. */
 export async function downloadText(ref: Ref): Promise<Spilled<string>> {
-  return spill(async (drop) => (await beeForDrop(drop).data.download(ref)).toUtf8())
+  return spill(async (drop, signal) =>
+    (await beeForDrop(drop).data.download(ref, {}, { signal })).toUtf8(),
+  )
 }
 
 async function uploadBytes(data: string): Promise<Ref> {

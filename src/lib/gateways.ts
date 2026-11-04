@@ -1,10 +1,16 @@
 /**
  * Drops: the interchangeable gateways a raktbeej link can be served
- * through. When a drop fails, the reader spills to the next.
+ * through. When a drop fails or stalls, the reader spills to the next.
  *
- * M2 implements the sequential contract pinned in M0 — drops tried in
- * order until one answers. Racing, health checks and the failover UI land
- * in M3.
+ * M3: requests are hedged — drop 1 goes first, and if it has not answered
+ * within `stagger` ms the next drop joins the race; the first drop to
+ * produce the content wins and the stragglers are aborted. A miss (404)
+ * knocks only that drop out of the current race and immediately invites
+ * the next one in.
+ *
+ * `?dead=<id>,<id>` in the query string blocks drops for the session —
+ * the demo flag that makes a takedown rehearstable without touching the
+ * network.
  */
 
 import { Bee, BeeResponseError } from '@ethersphere/bee-js'
@@ -31,11 +37,28 @@ const DEV_DROP: Drop = {
   dev: true,
 }
 
-/** Drops usable right now — the dev drop only when the page itself is local. */
+/** Parse `?dead=a,b` — pure, for tests. */
+export function parseDeadDrops(search: string): string[] {
+  const dead = new URLSearchParams(search).get('dead')
+  if (!dead) return []
+  return dead
+    .split(',')
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0)
+}
+
+/** Drops blocked by the demo flag for this page load. */
+export function deadDrops(): string[] {
+  return typeof location !== 'undefined' ? parseDeadDrops(location.search) : []
+}
+
+/** Drops usable right now — dev drop only when the page is local, minus blocked ones. */
 export function activeDrops(): readonly Drop[] {
   const local =
     typeof location !== 'undefined' && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)
-  return local ? [DEV_DROP, ...DROPS] : DROPS
+  const all = local ? [DEV_DROP, ...DROPS] : DROPS
+  const dead = new Set(deadDrops())
+  return all.filter((drop) => !dead.has(drop.id))
 }
 
 export interface Spilled<T> {
@@ -47,22 +70,85 @@ function isMiss(err: unknown): boolean {
   return err instanceof BeeResponseError && err.status === 404
 }
 
+export interface SpillOptions {
+  /** ms a drop may hog the race before the next one joins (default 750). */
+  stagger?: number
+}
+
 /**
- * Spill: run `task` against each drop in order until one resolves. If every
- * drop fails, rethrow the most serious error — a real fault beats a miss,
- * so "no drop has this chunk" is distinguishable from "drops are down".
+ * Spill: hedged race across the active drops. `task` runs against drop 1;
+ * while it stalls, later drops join after `stagger` ms each; a miss (404)
+ * pulls the next drop in immediately. The first drop to produce a value
+ * wins and aborts the stragglers. If no drop produces one, the most
+ * serious error wins the throw — a real fault beats a miss, so "no drop
+ * has this chunk" stays distinguishable from "the drops are down".
  */
-export async function spill<T>(task: (drop: Drop) => Promise<T>): Promise<Spilled<T>> {
-  const errors: unknown[] = []
-  for (const drop of activeDrops()) {
-    try {
-      return { drop, value: await task(drop) }
-    } catch (err) {
-      errors.push(err)
+export async function spill<T>(
+  task: (drop: Drop, signal: AbortSignal) => Promise<T>,
+  options?: SpillOptions,
+): Promise<Spilled<T>> {
+  const drops = activeDrops()
+  const stagger = options?.stagger ?? 750
+  if (drops.length === 0) throw new Error('spill: every drop is blocked (?dead=…)')
+
+  return new Promise<Spilled<T>>((resolve, reject) => {
+    const losers = new AbortController()
+    let launched = 0
+    let pending = 0
+    let done = false
+    let fault: unknown
+    let miss: unknown
+
+    const finish = (): void => {
+      if (done) return
+      done = true
+      losers.abort()
+      reject(fault ?? miss ?? new Error('spill: no drop answered'))
     }
-  }
-  const fault = errors.find((err) => !isMiss(err))
-  throw fault ?? errors[errors.length - 1] ?? new Error('spill: no drops available')
+
+    const launchNext = (): void => {
+      if (done || launched >= drops.length) return
+      const drop = drops[launched++]
+      pending++
+      task(drop, losers.signal).then(
+        (value) => {
+          if (done) return
+          done = true
+          losers.abort()
+          resolve({ drop, value })
+        },
+        (err) => {
+          if (done) return
+          pending--
+          if (isMiss(err)) {
+            if (miss === undefined) miss = err
+            // a miss means this drop cannot serve *this* request — no reason
+            // to let the stagger delay the next one
+            launchNext()
+          } else if (fault === undefined) {
+            fault = err
+          }
+          if (pending === 0 && launched === drops.length) finish()
+        },
+      )
+      if (launched < drops.length) {
+        setTimeout(() => launchNext(), stagger)
+      }
+    }
+
+    launchNext()
+  })
+}
+
+/** Human label for a drop's position: "drop 1 · bzz.link". */
+export function dropLabel(drop: Drop): string {
+  const n = DROPS.findIndex((d) => d.id === drop.id) + 1
+  return n > 0 ? `drop ${n} · ${drop.id}` : drop.id
+}
+
+/** URL that opens immutable content `ref` on `drop` — verified live on every drop. */
+export function contentUrl(drop: Drop, ref: string): string {
+  return `${drop.origin}/bytes/${ref}`
 }
 
 const bees = new Map<string, Bee>()
